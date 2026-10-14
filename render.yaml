@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: cipher-document-intelligence
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    disk:
+      name: cipher-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: AI_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: qwen/qwen3.8-27b
+      - key: APP_DEBUG
+        value: "false"
+      - key: OCR_ENGINE
+        value: tesseract
+      - key: OCR_LANG
+        value: eng+hin
+      - key: TESSERACT_PATH
+        value: /usr/bin/tesseract
+      - key: WORKER_POOL_SIZE
+        value: "1"
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: OUTPUT_DIR
+        value: /var/data/outputs
+      - key: CACHE_DIR
+        value: /var/data/cache
+      - key: TASK_QUEUE_DIR
+        value: /var/data/queue

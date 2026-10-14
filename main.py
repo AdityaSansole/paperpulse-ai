@@ -1,11 +1,17 @@
 import asyncio
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from routes.upload import router as upload_router
 from routes.tasks import router as tasks_router
@@ -191,13 +197,17 @@ app = FastAPI(
     version="3.0.0",
     description="AI-powered document processing with concurrent processing, caching, and hybrid extraction.",
     lifespan=lifespan,
-    debug=True,  # Enable debug mode for better error messages
+    debug=os.getenv("APP_DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"},
 )
 
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -227,22 +237,9 @@ def home():
     return response
 
 
-@app.get("/{catchall:path}")
-def fallback(catchall: str):
-    """
-    Catch-all route to serve the SPA React application index.html for any sub-routes
-    (like /batch, /history, /settings) so page reloads do not trigger 404s.
-    """
-    if catchall.startswith("api") or catchall == "health" or catchall == "metrics":
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Not Found")
-    
-    if os.path.exists("web/dist/index.html"):
-        return FileResponse("web/dist/index.html")
-    return {"message": "Frontend assets not found. Please build the frontend."}
-
-
-
+# NOTE: /health and /metrics MUST be registered before /{catchall:path}.
+# FastAPI matches routes in registration order; a catch-all registered first
+# will intercept every request, including these named endpoints.
 @app.get("/health")
 async def health():
     """
@@ -292,3 +289,15 @@ async def metrics():
         "queue": task_queue.get_stats(),
         "workers": worker_pool.get_stats(),
     }
+
+
+@app.get("/{catchall:path}")
+def fallback(catchall: str):
+    """
+    Catch-all route to serve the SPA React application index.html for any sub-routes
+    (like /batch, /history, /settings) so page reloads do not trigger 404s.
+    Must remain LAST so it does not shadow named endpoints above.
+    """
+    if os.path.exists("web/dist/index.html"):
+        return FileResponse("web/dist/index.html")
+    return {"message": "Frontend assets not found. Please build the frontend."}

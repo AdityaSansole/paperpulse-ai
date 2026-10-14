@@ -123,7 +123,8 @@ async def get_task_result(task_id: str):
     # Cache stores flat dict from process_document - filter out metadata fields
     metadata_keys = {
         "_metadata", "_cache_version", "task_id", "file_path", 
-        "classification", "processing_summary", "json_output_file", "download_url"
+        "classification", "processing_summary", "json_output_file", "download_url",
+        "success", "filename", "error", "message", "file_hash"
     }
     
     # Also filter out computed fields that shouldn't be in input data

@@ -5,7 +5,9 @@ import asyncio
 import logging
 import multiprocessing as mp
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,10 @@ class WorkerPool:
         if self.executor is not None:
             logger.warning("Worker pool already started")
             return
+
+        project_root = str(Path(__file__).resolve().parent.parent)
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
         
         self.executor = ProcessPoolExecutor(max_workers=self.max_workers)
         logger.info(f"Worker pool started with {self.max_workers} workers")

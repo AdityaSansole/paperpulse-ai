@@ -95,6 +95,110 @@ def test_processor_factory_resolution():
     print("✅ OOP Strategy Factory Resolution Tests Passed!")
 
 
+def test_gemini_provider_defaults_to_supported_model_fallback(monkeypatch):
+    """Verify GeminiProvider prefers a live model and keeps a fallback chain for retired IDs."""
+    import services.llm_service as llm_service
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+
+    provider = llm_service.GeminiProvider()
+    assert provider.model_names[0] == llm_service.DEFAULT_GEMINI_MODEL
+    assert "gemini-3.8-flash" in provider.model_names
+    assert "gemini-2.0-flash" in provider.model_names
+
+
+def test_provider_selection_and_unknown_alias(monkeypatch):
+    """Verify the active provider is honored and 'other' is normalized to unknown."""
+    import services.llm_service as llm_service
+
+    monkeypatch.setenv("AI_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    provider = llm_service.get_ai_provider()
+    assert provider.__class__.__name__ == "GroqProvider"
+
+    doc = llm_service._parse_model_json('{"document_type": "other", "summary": "unknown"}', "other")
+    assert doc.document_type == "unknown"
+    assert "Schema validation failed" not in (doc.summary or "")
+
+
+def test_ollama_provider_selection(monkeypatch):
+    """Verify the local Ollama provider is available when selected explicitly."""
+    import services.llm_service as llm_service
+
+    monkeypatch.setenv("AI_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "llama3.1")
+
+    provider = llm_service.get_ai_provider()
+    assert provider.__class__.__name__ == "OllamaProvider"
+    assert provider.model == "llama3.1"
+
+
+def test_tesseract_default_is_preserved_when_path_is_not_configured(monkeypatch):
+    """Do not overwrite pytesseract's executable default with None."""
+    from types import SimpleNamespace
+    import services.ocr_service as ocr_service
+
+    fake_tesseract = SimpleNamespace(pytesseract=SimpleNamespace(tesseract_cmd="tesseract"))
+    monkeypatch.setitem(sys.modules, "pytesseract", fake_tesseract)
+    monkeypatch.setattr(ocr_service, "_pytesseract", None)
+    monkeypatch.delenv("TESSERACT_PATH", raising=False)
+
+    assert ocr_service._get_pytesseract() is fake_tesseract
+    assert fake_tesseract.pytesseract.tesseract_cmd == "tesseract"
+
+
+def test_vite_proxy_defaults_to_backend_port_8000():
+    """Keep the frontend API proxy aligned with the documented backend port."""
+    from pathlib import Path
+
+    vite_config = Path(__file__).resolve().parents[1] / "web" / "vite.config.ts"
+    assert "process.env.VITE_API_PROXY_TARGET ?? 'http://localhost:8000'" in vite_config.read_text()
+
+
+def test_task_queue_uses_configured_storage_directory(monkeypatch, tmp_path):
+    """Persist task state on the configured deployment volume."""
+    import services.task_queue as task_queue_service
+
+    queue_path = tmp_path / "persistent-queue"
+    monkeypatch.setattr(task_queue_service, "_task_queue", None)
+    monkeypatch.setenv("TASK_QUEUE_DIR", str(queue_path))
+
+    queue = task_queue_service.get_task_queue()
+    assert queue.queue_dir == queue_path
+    assert queue_path.is_dir()
+
+    monkeypatch.setattr(task_queue_service, "_task_queue", None)
+
+
+def test_gemini_provider_requires_available_sdk(monkeypatch):
+    """Verify a missing Gemini SDK fails cleanly instead of crashing worker processes."""
+    import services.llm_service as llm_service
+
+    monkeypatch.setattr(llm_service, "genai", None)
+    monkeypatch.setattr(llm_service, "legacy_genai", None)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    try:
+        llm_service.GeminiProvider()
+        raise AssertionError("GeminiProvider should fail when no SDK is installed")
+    except ImportError as exc:
+        assert "google-genai" in str(exc) or "google-generativeai" in str(exc)
+
+
+def test_worker_pool_adds_project_root_to_sys_path():
+    """Verify worker pool startup always exposes the project root for spawned workers."""
+    import sys
+    from pathlib import Path
+    from services.worker_pool import WorkerPool
+
+    project_root = str(Path(__file__).resolve().parents[1])
+    worker_pool = WorkerPool(max_workers=1)
+    worker_pool.start()
+    assert project_root in sys.path
+    worker_pool.stop()
+
+
 def test_aadhaar_processor_strategies():
     """Verify Aadhaar-specific normalization and post-processing strategies."""
     print("🧪 Running Aadhaar Processor Strategy Tests...")

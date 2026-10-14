@@ -28,6 +28,11 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('summary');
 
+  const people =
+    'people' in data && Array.isArray((data as { people?: unknown }).people)
+      ? ((data as { people?: Array<{ name?: string; date_of_birth?: string; id_number?: string; address?: string }> }).people ?? [])
+      : [];
+
   const tabs = [
     { id: 'summary', label: 'Summary', icon: <FileText size={16} /> },
     { id: 'fields', label: 'Extracted Fields', icon: <Layers size={16} /> },
@@ -70,7 +75,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
           <div className="results-panel__actions">
             <a
               href={downloadUrl}
-              download={`${(data as Record<string, unknown>).filename || 'extracted_data'}.json`}
+              download="extracted_data.json"
               className="results-panel__download-btn"
               title="Download results as JSON file"
             >
@@ -100,9 +105,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                 {data.review_notes && data.review_notes.length > 0 && (
                   <ReviewNotes notes={data.review_notes} needsReview={data.needs_review} />
                 )}
-                {(data as Record<string, unknown>).people && (data as Record<string, unknown>).people.length > 1 && (
-                  <PeopleTable people={(data as Record<string, unknown>).people} />
-                )}
+                {people.length > 1 && <PeopleTable people={people} />}
               </div>
             </motion.div>
           )}

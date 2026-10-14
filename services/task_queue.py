@@ -5,6 +5,7 @@ Manages document processing tasks and their lifecycle.
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -218,6 +219,6 @@ def get_task_queue() -> TaskQueue:
     """Get the global task queue instance."""
     global _task_queue
     if _task_queue is None:
-        queue_dir = "queue"
+        queue_dir = os.getenv("TASK_QUEUE_DIR", "queue")
         _task_queue = TaskQueue(queue_dir=queue_dir)
     return _task_queue

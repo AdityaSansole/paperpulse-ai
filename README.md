@@ -251,6 +251,25 @@ python -m pytest tests/
 - File hash-based deduplication
 - Input validation and sanitization
 
+## Deploying a Demo on Render
+
+The repository includes a Dockerfile and `render.yaml` Blueprint for deploying
+the combined React frontend and FastAPI backend. The container installs
+Tesseract with English and Hindi language data and builds the frontend before
+starting the API server.
+
+1. Push the reviewed project to a GitHub repository. Keep `.env` and real
+   documents out of Git; provide API keys only through the hosting dashboard.
+2. In Render, create a new Blueprint and select the GitHub repository.
+3. Set the requested `GROQ_API_KEY` secret in Render, then deploy the service.
+4. Open the generated `onrender.com` URL and check `/health`.
+
+The Blueprint provisions a persistent disk, which may incur hosting charges.
+Treat the deployed service as a demo with non-sensitive sample documents
+only: the upload API is not authenticated or rate-limited. Add access control,
+abuse protection, and a privacy/data-retention policy before accepting real
+identity documents or opening the service to general public use.
+
 ## License
 
 MIT License

@@ -310,8 +310,13 @@ def create_document(
         Typed document instance (may be UnknownDocument on failure)
     """
     log_prefix = f"[{request_id}]" if request_id else ""
-    
-    schema_class = DOCUMENT_SCHEMA_MAP.get(document_type)
+
+    normalized_type = str(document_type or "unknown").strip().lower()
+    if normalized_type in {"other", "unknown", "unclear", "not_applicable"}:
+        normalized_type = "unknown"
+        data = {**data, "document_type": "unknown"}
+
+    schema_class = DOCUMENT_SCHEMA_MAP.get(normalized_type)
     
     if not schema_class:
         # Unknown document type

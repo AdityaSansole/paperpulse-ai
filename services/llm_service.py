@@ -20,6 +20,7 @@ import logging
 import re
 import uuid
 import warnings
+import urllib.request
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
@@ -31,12 +32,16 @@ try:
     from google.genai import types
     legacy_genai = None
 except ImportError:
-    # Installed in the current project venv; keep it working until dependencies are updated.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", FutureWarning)
-        import google.generativeai as legacy_genai
     genai = None
     types = None
+    legacy_genai = None
+    try:
+        # Older SDK fallback for environments still using the legacy package.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            import google.generativeai as legacy_genai
+    except ImportError:
+        legacy_genai = None
 from PIL import Image
 
 # NEW: Import normalizer and schema factory
@@ -48,9 +53,29 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODELS = (
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+)
+DEFAULT_GEMINI_MODEL = DEFAULT_GEMINI_MODELS[0]
+DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
 DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 8192
 DEFAULT_GEMINI_RETRY_MAX_OUTPUT_TOKENS = 16384
+
+
+def _resolve_model_candidates(model_name: Optional[str]) -> list[str]:
+    """Return the configured model first, then a fallback chain for retired model IDs."""
+    candidates: list[str] = []
+    if model_name:
+        candidates.append(model_name)
+
+    for candidate in DEFAULT_GEMINI_MODELS:
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    return candidates
 
 
 def _get_int_env(name: str, default: int, min_value: int = 1) -> int:
@@ -473,13 +498,16 @@ def _parse_model_json(
     logger.debug(f"{log_prefix} Raw parsed data: {raw_data}")
     
     # Step 2: Detect document type
-    detected_type = raw_data.get("document_type", doc_type)
-    
+    detected_type = str(raw_data.get("document_type", doc_type) or doc_type).strip().lower()
+    if detected_type in {"other", "unknown", "unclear", "not_applicable"}:
+        detected_type = "unknown"
+
     # Step 3: Normalize data BEFORE schema validation
     logger.info(f"{log_prefix} Normalizing {detected_type} data")
     normalized_data = normalize_document_data(detected_type, raw_data)
+    normalized_data["document_type"] = detected_type
     logger.debug(f"{log_prefix} Normalized data: {normalized_data}")
-    
+
     # Step 4: Create typed document via factory
     logger.info(f"{log_prefix} Creating typed document: {detected_type}")
     document = create_document(
@@ -529,11 +557,19 @@ class BaseAIProvider(ABC):
 
 class GeminiProvider(BaseAIProvider):
     def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            raise ValueError("GEMINI_API_KEY not set in .env")
+            raise ValueError("GEMINI_API_KEY/GOOGLE_API_KEY not set in .env")
+
+        if genai is None and legacy_genai is None:
+            raise ImportError(
+                "Neither google-genai nor google-generativeai is installed. "
+                "Install the project dependencies with: pip install -r requirements.txt"
+            )
         
         self.model_name = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+        self.model_names = _resolve_model_candidates(self.model_name)
+        self.model_name = self.model_names[0]
         self.max_output_tokens = _get_int_env(
             "GEMINI_MAX_OUTPUT_TOKENS",
             DEFAULT_GEMINI_MAX_OUTPUT_TOKENS,
@@ -553,7 +589,7 @@ class GeminiProvider(BaseAIProvider):
         else:
             legacy_genai.configure(api_key=api_key)
             self.client = None
-            self.model = legacy_genai.GenerativeModel(self.model_name)
+            self.model = None
 
         logger.info(
             "GeminiProvider initialized with %s via %s (max_output_tokens=%s, "
@@ -589,40 +625,64 @@ class GeminiProvider(BaseAIProvider):
 
     def _generate_content(self, contents, request_id: Optional[str] = None):
         log_prefix = f"[{request_id}]" if request_id else ""
+        last_error: Optional[Exception] = None
 
-        if self.sdk_name == "google-genai":
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=self._generation_config(self.max_output_tokens),
-            )
-        else:
-            response = self.model.generate_content(
-                contents,
-                generation_config=self._generation_config(self.max_output_tokens),
-            )
-        finish_reason = _get_finish_reason(response)
+        for model_name in self.model_names:
+            self.model_name = model_name
+            try:
+                if self.sdk_name == "google-genai":
+                    response = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=contents,
+                        config=self._generation_config(self.max_output_tokens),
+                    )
+                else:
+                    if self.model is None:
+                        self.model = legacy_genai.GenerativeModel(self.model_name)
+                    response = self.model.generate_content(
+                        contents,
+                        generation_config=self._generation_config(self.max_output_tokens),
+                    )
 
-        if finish_reason == "MAX_TOKENS" and self.retry_max_output_tokens > self.max_output_tokens:
-            logger.warning(
-                "%s Gemini response hit MAX_TOKENS at %s. Retrying with %s.",
-                log_prefix,
-                self.max_output_tokens,
-                self.retry_max_output_tokens,
-            )
-            if self.sdk_name == "google-genai":
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=self._generation_config(self.retry_max_output_tokens),
+                finish_reason = _get_finish_reason(response)
+
+                if finish_reason == "MAX_TOKENS" and self.retry_max_output_tokens > self.max_output_tokens:
+                    logger.warning(
+                        "%s Gemini response hit MAX_TOKENS at %s. Retrying with %s.",
+                        log_prefix,
+                        self.max_output_tokens,
+                        self.retry_max_output_tokens,
+                    )
+                    if self.sdk_name == "google-genai":
+                        response = self.client.models.generate_content(
+                            model=self.model_name,
+                            contents=contents,
+                            config=self._generation_config(self.retry_max_output_tokens),
+                        )
+                    else:
+                        if self.model is None:
+                            self.model = legacy_genai.GenerativeModel(self.model_name)
+                        response = self.model.generate_content(
+                            contents,
+                            generation_config=self._generation_config(self.retry_max_output_tokens),
+                        )
+
+                return response
+            except Exception as exc:
+                last_error = exc
+                error_text = str(exc).upper()
+                if "404" not in error_text and "NOT_FOUND" not in error_text:
+                    raise
+                logger.warning(
+                    "%s Gemini model %s is unavailable (%s). Trying next available model.",
+                    log_prefix,
+                    model_name,
+                    exc,
                 )
-            else:
-                response = self.model.generate_content(
-                    contents,
-                    generation_config=self._generation_config(self.retry_max_output_tokens),
-                )
 
-        return response
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("No Gemini model candidates were available")
     
     def extract_from_image(
         self,
@@ -774,7 +834,8 @@ class GroqProvider(BaseAIProvider):
             if not api_key:
                 raise ValueError("GROQ_API_KEY not set in .env")
             self.client = Groq(api_key=api_key)
-            logger.info("GroqProvider initialized")
+            self.model = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+            logger.info("GroqProvider initialized with model %s", self.model)
         except ImportError:
             raise ImportError("groq not installed. Run: pip install groq")
     
@@ -801,7 +862,7 @@ class GroqProvider(BaseAIProvider):
             
             logger.info(f"{log_prefix} Calling Groq for text extraction: {doc_type}")
             response = self.client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model=self.model,
                 messages=[{"role": "user", "content": full_prompt}],
                 response_format={"type": "json_object"},
                 temperature=0.0,
@@ -833,20 +894,100 @@ class GroqProvider(BaseAIProvider):
 
 
 # ============================================================
+# OLLAMA PROVIDER (LOCAL TEXT-ONLY FALLBACK)
+# ============================================================
+
+class OllamaProvider(BaseAIProvider):
+    def __init__(self):
+        self.base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+        self.model = os.getenv("OLLAMA_MODEL", "llama3.1")
+        self.timeout = _get_int_env("OLLAMA_TIMEOUT_SECONDS", 120, min_value=10)
+        logger.info("OllamaProvider initialized with model %s at %s", self.model, self.base_url)
+
+    def _chat(self, prompt: str) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            body = response.read().decode("utf-8")
+
+        if not body:
+            raise ValueError("Ollama returned an empty response")
+
+        parsed = json.loads(body)
+        message = parsed.get("message") or {}
+        content = message.get("content") or parsed.get("response")
+        if not content:
+            raise ValueError("Ollama response did not include usable content")
+
+        return str(content)
+
+    def extract_from_image(self, image_path: str, doc_type: str) -> dict:
+        """Ollama is text-only. Run OCR first, then use extract_from_text()."""
+        raise NotImplementedError("Ollama is text-only. Run OCR first, then use extract_from_text()")
+
+    def extract_from_text(
+        self,
+        text: str,
+        doc_type: str = "unknown",
+        request_id: Optional[str] = None
+    ) -> ExtractedDocument:
+        """Extract from OCR text using a local Ollama model."""
+        log_prefix = f"[{request_id}]" if request_id else ""
+
+        try:
+            prompt = self.get_prompt(doc_type)
+            full_prompt = f"{prompt}\n\nDocument text:\n{text}"
+
+            logger.info(f"{log_prefix} Calling Ollama for text extraction: {doc_type}")
+            response_text = self._chat(full_prompt)
+            if not response_text or len(response_text.strip()) < 10:
+                raise ValueError("Ollama returned empty or invalid response")
+
+            document = _parse_model_json(response_text, doc_type, request_id)
+            logger.info(f"{log_prefix} Ollama text extraction successful: {type(document).__name__}")
+            return document
+
+        except Exception as e:
+            logger.error(f"{log_prefix} Ollama text extraction failed: {e}")
+            return create_document(
+                document_type="unknown",
+                data={
+                    "detected_document_type": doc_type,
+                    "summary": f"Ollama text extraction failed: {str(e)}",
+                    "processing_status": ProcessingStatus.FAILED
+                },
+                request_id=request_id
+            )
+
+
+# ============================================================
 # PROVIDER FACTORY — Call this everywhere
 # ============================================================
 
 def get_ai_provider() -> BaseAIProvider:
-    provider = os.getenv("AI_PROVIDER", "gemini")
-    
+    provider = (os.getenv("AI_PROVIDER") or "").strip().lower()
+    if not provider:
+        provider = "groq" if os.getenv("GROQ_API_KEY") else "gemini"
+
     if provider == "gemini":
         return GeminiProvider()
     elif provider == "groq":
         return GroqProvider()
     elif provider == "ollama":
-        raise RuntimeError("Ollama disabled. Set AI_PROVIDER=gemini or groq.")
+        return OllamaProvider()
     else:
-        logger.warning(f"Unknown provider '{provider}', defaulting to Gemini")
+        logger.warning(f"Unknown provider '{provider}', defaulting to Groq when available else Gemini")
+        if os.getenv("GROQ_API_KEY"):
+            return GroqProvider()
         return GeminiProvider()
 
 
@@ -882,66 +1023,68 @@ def extract_document(image_path: str, doc_type: str = "unknown") -> tuple[Extrac
     
     logger.info(f"[{request_id}] Starting extraction: {doc_type} from {image_path}")
     
-    # Try Gemini Vision first
-    try:
-        provider = GeminiProvider()
-        document = provider.extract_from_image(image_path, doc_type, request_id)
-        
-        # Check if extraction failed
-        if document.processing_status == ProcessingStatus.FAILED:
-            reason = getattr(document, "summary", None) or "Gemini extraction returned failed status"
-            raise RuntimeError(reason)
-        
-        # Build metadata
-        metadata = {
-            "request_id": request_id,
-            "provider": "gemini_vision",
-            "model_used": "gemini-2.5-flash",
-            "processing_time_ms": round((time.time() - start_time) * 1000, 2),
-            "ocr_used": False,
-            "fallback_used": False,
-            "provider_errors": provider_errors,
-        }
-        
-        logger.info(f"[{request_id}] Extraction successful via Gemini Vision")
-        return document, metadata
-    
-    except Exception as e:
-        provider_errors.append(f"Gemini Vision: {e}")
-        logger.warning(f"[{request_id}] Gemini Vision failed: {e}. Trying OCR + Groq fallback.")
-    
+    provider = get_ai_provider()
+    provider_name = type(provider).__name__.lower()
+
+    if provider_name == "groqprovider":
+        logger.info(f"[{request_id}] AI provider is configured as Groq; skipping Gemini and using Groq OCR-text path.")
+    else:
+        # Try Gemini Vision first when Gemini is the active provider.
+        try:
+            provider = GeminiProvider()
+            document = provider.extract_from_image(image_path, doc_type, request_id)
+
+            if document.processing_status == ProcessingStatus.FAILED:
+                reason = getattr(document, "summary", None) or "Gemini extraction returned failed status"
+                raise RuntimeError(reason)
+
+            metadata = {
+                "request_id": request_id,
+                "provider": "gemini_vision",
+                "model_used": provider.model_name,
+                "processing_time_ms": round((time.time() - start_time) * 1000, 2),
+                "ocr_used": False,
+                "fallback_used": False,
+                "provider_errors": provider_errors,
+            }
+
+            logger.info(f"[{request_id}] Extraction successful via Gemini Vision")
+            return document, metadata
+
+        except Exception as e:
+            provider_errors.append(f"Gemini Vision: {e}")
+            logger.warning(f"[{request_id}] Gemini Vision failed: {e}. Trying OCR + Groq fallback.")
+
     # Fallback: OCR + Groq
     try:
         from services.ocr_service import extract_text
         ocr_text, ocr_confidence = extract_text(image_path)
         logger.info(f"[{request_id}] OCR done: {len(ocr_text)} chars, confidence {ocr_confidence:.2f}")
-        
+
         if ocr_text and len(ocr_text.strip()) > 20:
             provider = GroqProvider()
             document = provider.extract_from_text(ocr_text, doc_type, request_id)
-            
-            # Check if extraction failed
+
             if document.processing_status == ProcessingStatus.FAILED:
                 reason = getattr(document, "summary", None) or "Groq extraction returned failed status"
                 raise RuntimeError(reason)
-            
-            # Build metadata
+
             metadata = {
                 "request_id": request_id,
                 "provider": "groq",
-                "model_used": "llama-3.1-8b-instant",
+                "model_used": getattr(provider, "model", DEFAULT_GROQ_MODEL),
                 "processing_time_ms": round((time.time() - start_time) * 1000, 2),
                 "ocr_used": True,
                 "ocr_confidence": ocr_confidence,
                 "fallback_used": True,
                 "provider_errors": provider_errors,
             }
-            
+
             logger.info(f"[{request_id}] Extraction successful via Groq fallback")
             return document, metadata
         else:
             raise RuntimeError("OCR text too short or empty")
-    
+
     except Exception as e:
         provider_errors.append(f"OCR/Groq fallback: {e}")
         logger.error(f"[{request_id}] Groq fallback also failed: {e}")

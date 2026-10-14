@@ -66,7 +66,9 @@ def _get_pytesseract():
     global _pytesseract
     if _pytesseract is None:
         import pytesseract as _pt
-        _pt.pytesseract.tesseract_cmd = os.getenv("TESSERACT_PATH")
+        tesseract_path = os.getenv("TESSERACT_PATH")
+        if tesseract_path:
+            _pt.pytesseract.tesseract_cmd = tesseract_path
         _pytesseract = _pt
     return _pytesseract
 

@@ -82,7 +82,17 @@ def process_document_worker(file_path: str, filename: str, file_hash: str) -> di
                 "success": False,
                 "filename": filename,
                 "file_hash": file_hash,
-                "extracted_data": result_dict,
+                "extracted_data": {
+                    "document_type": "unknown",
+                    "detected_document_type": result_dict.get("document_type", "unknown"),
+                    "summary": summary,
+                    "processing_status": "failed",
+                    "review_flags": [],
+                    "review_notes": [summary],
+                    "needs_review": False,
+                    "raw_text": None,
+                    "people": [],
+                },
             }
 
         if not result_dict.get("error"):
@@ -95,19 +105,25 @@ def process_document_worker(file_path: str, filename: str, file_hash: str) -> di
         
     except Exception as exc:
         logger.error(f"Worker error processing {filename}: {exc}", exc_info=True)
-        
-        # Return error result
+        error_message = f"Error: {str(exc)}"
+        fallback = {
+            "document_type": "unknown",
+            "detected_document_type": "unknown",
+            "summary": error_message,
+            "processing_status": "failed",
+            "review_flags": [],
+            "review_notes": [error_message],
+            "needs_review": False,
+            "raw_text": None,
+            "people": [],
+        }
         return {
             "success": False,
             "filename": filename,
-            "extracted_data": {
-                "document_type": "Unknown",
-                "summary": f"Processing error: {str(exc)}",
-                "confidence": 0.0,
-                "people": [],
-            },
-            "message": f"Error: {str(exc)}",
+            "error": error_message,
+            "message": error_message,
             "file_hash": file_hash,
+            "extracted_data": fallback,
         }
     
     finally:
