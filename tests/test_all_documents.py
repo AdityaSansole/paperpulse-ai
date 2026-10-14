@@ -219,7 +219,7 @@ async def test_all():
     """Test all document types"""
     
     print("\n" + "=" * 80)
-    print("DOCINTEL - COMPREHENSIVE DOCUMENT EXTRACTION TEST")
+    print("PAPERPULSE AI - COMPREHENSIVE DOCUMENT EXTRACTION TEST")
     print("=" * 80)
     print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     

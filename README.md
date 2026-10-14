@@ -1,6 +1,6 @@
-# Document Intelligence System
+# PaperPulse AI
 
-AI-powered document extraction system for Indian documents with support for multiple document types including Aadhaar, PAN, Voter ID, Driving License, Passport, and Invoices.
+PaperPulse AI is an AI-powered document extraction system for Indian documents, including Aadhaar, PAN, Voter ID, Driving License, Passport, and invoices.
 
 ## Features
 

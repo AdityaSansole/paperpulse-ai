@@ -88,10 +88,10 @@ export function Header({ isDark, onToggleTheme }: HeaderProps) {
     >
       <div className="header__inner">
         {/* Logo */}
-        <NavLink to="/" className="header__logo" aria-label="DocIntel — Home">
+        <NavLink to="/" className="header__logo" aria-label="PaperPulse AI — Home">
           <FileText className="header__logo-icon" />
           <span className="header__logo-text">
-            DocIntel
+            PaperPulse AI
             <motion.span
               className="header__logo-underline"
               initial={{ width: 0 }}

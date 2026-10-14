@@ -1,6 +1,6 @@
 # Installation & Setup Guide
 
-This guide walks you through setting up both the **FastAPI Backend** and the new **React TypeScript Frontend** for the Document Intelligence System.
+This guide walks you through setting up both the **FastAPI Backend** and **React TypeScript Frontend** for PaperPulse AI.
 
 ---
 

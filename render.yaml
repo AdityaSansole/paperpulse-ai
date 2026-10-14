@@ -1,13 +1,13 @@
 services:
   - type: web
-    name: cipher-document-intelligence
+    name: paperpulse-ai
     runtime: docker
     plan: starter
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
     disk:
-      name: cipher-data
+      name: paperpulse-ai-data
       mountPath: /var/data
       sizeGB: 1
     envVars:

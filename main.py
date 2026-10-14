@@ -193,7 +193,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Document Intelligence System",
+    title="PaperPulse AI",
     version="3.0.0",
     description="AI-powered document processing with concurrent processing, caching, and hybrid extraction.",
     lifespan=lifespan,
@@ -228,7 +228,7 @@ def home():
         response = FileResponse("web/dist/index.html")
     else:
         # Fallback if front-end hasn't been built yet
-        return {"message": "Document Intelligence Backend is healthy. Please build frontend assets with 'npm run build' inside web/."}
+        return {"message": "PaperPulse AI backend is healthy. Please build frontend assets with 'npm run build' inside web/."}
     
     # Disable caching for development
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"

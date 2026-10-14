@@ -223,7 +223,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <span>Supported Documents</span>
             </h3>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              The Document Intelligence system automatically classifies, validates, and extracts structures from these document formats:
+              PaperPulse AI automatically classifies, validates, and extracts structured data from these document formats:
             </p>
             <div className="settings-badges">
               {documentTypes.map((doc, idx) => (

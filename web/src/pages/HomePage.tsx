@@ -79,7 +79,7 @@ export const HomePage: React.FC = () => {
   return (
     <motion.div {...pageTransition}>
       <PageContainer
-        title="Document Intelligence"
+        title="PaperPulse AI"
         subtitle="AI-powered document extraction and analysis"
       >
         <div className="home-page">
